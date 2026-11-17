@@ -1,0 +1,396 @@
+---
+title: "Help! I’m Having a Heart Attack!"
+subtitle: "Analyzing Risk Factors and Predictors of Heart Attacks"
+author: "Robert Harper"
+date: "Last updated: `r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  beamer_presentation:
+    theme: "Madrid"
+    highlight: haddock
+---
+```{r setup, include=FALSE}
+# Use this chunk to quietly load your packkges
+
+knitr::opts_chunk$set(
+	fig.align = "center",
+	message = FALSE,
+	warning = FALSE
+)
+
+options(knitr.table.format = function() {
+  if (knitr::is_latex_output())
+    "latex" else "pipe"
+})
+# Packages loaded in this chunk will not appear in the presentation. 
+
+library(ggplot2) # Useful for creating plots
+library(dplyr)  # Useful for data maipulation
+library(knitr) # Useful for creating nice tables
+library(readr)
+library(car)
+library(gridExtra)
+library(grid)
+library(kableExtra)
+
+
+# Data taken from [1]
+heart <- read_csv('data/heart.csv')
+
+heart %>% str()
+
+# Age : int
+heart$age %>% is.integer()
+heart$age <- heart$age %>% as.integer()
+
+heart$age_group <- cut(heart$age, breaks = c(29, 39, 49, 59, 69, 79), 
+                       labels = c("30-39", "40-49", "50-59", "60-69", "70-79"))
+
+# Sex : factor
+heart$sex<-factor(heart$sex,
+                          levels = c(0,1),
+                          labels = c("Female","Male"))
+# cp : Chest Pain type chest pain type - Factor
+      # Value 1: typical angina
+      # Value 2: atypical angina
+      # Value 3: non-anginal pain
+      # Value 4: asymptomatic
+heart$cp <- factor(heart$cp,
+                   levels = c(0, 1, 2, 3),
+                   labels = c("Typical Angina", "Atypical Angina", 
+                              "Non-Anginal Pain", "Asymptomatic"))
+
+# trtbps : resting blood pressure (in mm Hg) int
+heart$trestbps <- heart$trestbps %>% as.integer()
+
+# chol : cholestoral in mg/dl fetched via BMI sensor : int
+heart$chol <- heart$chol %>% as.integer()
+
+# fbs : (fasting blood sugar > 120 mg/dl) (1 = true; 0 = false) : factor
+heart$fbs<-factor(heart$fbs,
+                  levels = c(0,1),
+                  labels = c("<=120mg/dl",">120mg/dl"))
+
+
+# restecg : resting electrocardiographic results : factor
+
+# Value 0: normal
+# Value 1: having ST-T wave abnormality (T wave inversions and/or ST elevation or depression of > 0.05 mV)
+# Value 2: showing probable or definite left ventricular hypertrophy by Estes' criteria
+
+heart$restecg <-factor(heart$restecg,
+                       levels = c(0,1,2),
+                       labels = c("Normal","ST-T wave abnormality", "LVH"))
+
+# thalach : maximum heart rate achieved - int
+heart$thalach <- heart$thalach %>% as.integer()
+# exng: exercise induced angina (1 = yes; 0 = no) factor
+heart$exang<-factor(heart$exang,
+                  levels = c(0,1),
+                  labels = c("No","Yes"))
+
+# Old peak
+# Leave as numeric
+
+# slope : factor
+heart$slope<-factor(heart$slope,
+                    levels = c(0,1,2),
+                    labels = c("Upsloping","Flat", "Downsloping"))
+
+# caa: number of major vessels (0-3): int
+heart$ca <- heart$ca %>% as.integer()
+
+# Thall : factor
+heart$thal<-factor(heart$thal,
+                    levels = c(1,2,3),
+                    labels = c("Normal","Fixed Defect", "Reversible Defect"))
+
+# Create a new binary column 'target_binary'
+heart$target_binary <- ifelse(heart$target > 0.5, 1, 0)
+
+# Categorize the risk percentage into risk levels
+heart$risk_level <- cut(heart$target, 
+                        breaks = c(-Inf, .33, .66, Inf), 
+                        labels = c("Low Risk", "Medium Risk", "High Risk"))
+
+# Check the first few rows of the dataset to confirm the new column
+head(heart)
+
+```
+
+# Introduction
+
+-   Heart attacks (myocardial infarctions) are a major cause of death in Australia.
+-   Understanding their risk factors is vital for prevention [1].
+-   Age and gender are commonly considered significant predictors of heart attack risk.
+
+
+# Introduction Cont.
+-   This study investigates the impact of age on heart attack risk using an open dataset that includes clinical and demographic variables [2].
+-   My aim is to explore the extent to which age and gender influence heart attack risk, considering other known risk factors; cholesterol levels and blood pressure, to provide insights for medical practice and public health.
+
+
+# Problem Statement
+
+There is increasing risk of heart attacks and the need to understand how key factors like age, gender, blood pressure, and cholesterol levels contribute to this risk. By analysing demographic and clinical data, the study aims to identify which of these variables most significantly affect heart attack likelihood, offering insights for improved prevention and treatment strategies.
+
+# Data
+
+The data has been downloaded from [1]. This is a popular and frequently used data set for heart attack analysis.
+
+-   The data contains 14 variables and 1025 records.
+-   It is a combination of four healthcare databases from Cleveland, Hungary, Switzerland and Long Beach Venice, compiled in 1988.
+-   I will be focusing on four of those - Age, sex, blood pressure and cholesterol.
+-   The 'target' variable indicates the heart attack risk as a probability (0-1)
+
+# Data Cont.
+
+## Data Explained
+
+-   Age is represented as an integer number.
+-   I have added another column which categorises age into 'age_groups'.
+-   Cholesterol (chol) is represented in mg/dl as an integer.
+-   Resting blood pressure (trestbps) is showing systolic blood pressure readings as an integer.
+-   The 'target' variable has been found to be clustered into two groups, low and high risk.
+-   I have added another column 'target_binary' where risk \< 0.5 is '0' and \> 0.5 is '1'.
+-   I also added a column that splits heart attack risk into three categories: Low, Medium and High Risk.
+
+# Descriptive Statistics and Visualisation
+
+```{r, echo = FALSE, results = 'asis'}
+library(kableExtra)
+
+# Adjust the overall table font size and scaling
+options(knitr.kable.NA = "", scipen = 999)
+cat("\\tiny\n")  # Set a small font size to fit all content on one slide
+
+# Descriptive Statistics for Age by Gender
+heart %>% group_by(sex) %>% summarise(Min = min(age, na.rm = TRUE),
+                                      Q1 = quantile(age, probs = .25, na.rm = TRUE),
+                                      Median = median(age, na.rm = TRUE),
+                                      Q3 = quantile(age, probs = .75, na.rm = TRUE),
+                                      Max = max(age, na.rm = TRUE),
+                                      Mean = mean(age, na.rm = TRUE),
+                                      SD = sd(age, na.rm = TRUE),
+                                      n = n(),
+                                      Missing = sum(is.na(age))) -> table1
+kable(table1, caption = "Descriptive Statistics for Age by Gender") %>%
+  kable_styling(latex_options = "scale_down", font_size = 6, full_width = FALSE)
+
+# Descriptive Statistics for Cholesterol by Gender
+heart %>% group_by(sex) %>% summarise(Min = min(chol, na.rm = TRUE),
+                                      Q1 = quantile(chol, probs = .25, na.rm = TRUE),
+                                      Median = median(chol, na.rm = TRUE),
+                                      Q3 = quantile(chol, probs = .75, na.rm = TRUE),
+                                      Max = max(chol, na.rm = TRUE),
+                                      Mean = mean(chol, na.rm = TRUE),
+                                      SD = sd(chol, na.rm = TRUE),
+                                      n = n(),
+                                      Missing = sum(is.na(chol))) -> chol_table
+kable(chol_table, caption = "Descriptive Statistics for Cholesterol by Gender") %>%
+  kable_styling(latex_options = "scale_down", font_size = 6, full_width = FALSE)
+
+# Descriptive Statistics for Resting Blood Pressure by Gender
+heart %>% group_by(sex) %>% summarise(Min = min(trestbps, na.rm = TRUE),
+                                      Q1 = quantile(trestbps, probs = .25, na.rm = TRUE),
+                                      Median = median(trestbps, na.rm = TRUE),
+                                      Q3 = quantile(trestbps, probs = .75, na.rm = TRUE),
+                                      Max = max(trestbps, na.rm = TRUE),
+                                      Mean = mean(trestbps, na.rm = TRUE),
+                                      SD = sd(trestbps, na.rm = TRUE),
+                                      n = n(),
+                                      Missing = sum(is.na(trestbps))) -> trestbps_table
+kable(trestbps_table, caption = "Descriptive Statistics for Resting Blood Pressure by Gender") %>%
+  kable_styling(latex_options = "scale_down", font_size = 6, full_width = FALSE)
+
+
+
+
+```
+
+# Descriptive Statistics and Visualisation (Cont)
+
+### Cholesterol Levels by Age Group and Heart Attack Risk Levels by Gender
+
+```{r, echo = FALSE, fig.width = 11, fig.height = 5.5, fig.align = "center"}
+library(gridExtra)
+
+# Cholesterol Levels by Age Group
+heart$age_group <- cut(heart$age, breaks = c(29, 39, 49, 59, 69, 79), 
+                       labels = c("30-39", "40-49", "50-59", "60-69", "70-79"))
+p1 <- ggplot(heart, aes(x = age_group, y = chol)) +
+  geom_boxplot(fill = "lightgreen", color = "black") +
+  labs(title = "Cholesterol Levels by Age Group", x = "Age Group", y = "Cholesterol (mg/dl)") +
+  theme_minimal()
+
+# Heart Attack Risk by Gender
+heart$risk_level <- cut(heart$target, 
+                        breaks = c(-Inf, .33, .66, Inf), 
+                        labels = c("Low Risk", "Medium Risk", "High Risk"))
+
+p2 <- ggplot(heart, aes(x = sex, fill = risk_level)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Heart Attack Risk Levels by Gender", x = "Gender", y = "Count", fill = "Risk Level") +
+  scale_fill_manual(values = c("lightgreen", "orange", "red")) +
+  theme_minimal()
+
+# Arrange two plots side by side
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+# Descriptive Statistics and Visualisation (Cont)
+
+### Age vs. Cholesterol by Gender and Resting Blood Pressure by Sex
+
+```{r, echo = FALSE, fig.width = 11, fig.height = 5.5, fig.align = "center"}
+# Age vs Cholesterol by Gender (scatter)
+p3 <- ggplot(heart, aes(x = age, y = chol, color = sex)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Age vs. Cholesterol Levels by Gender", x = "Age", y = "Cholesterol (mg/dl)", color = "Gender") +
+  scale_color_manual(values = c("purple", "green"), labels = c("Female", "Male")) +
+  theme_minimal()
+
+# Boxplot of Resting Blood Pressure by Gender
+p4 <- ggplot(heart, aes(x = sex, y = trestbps, fill = sex)) +
+  geom_boxplot() +
+  labs(title = "Resting Blood Pressure by Gender", x = "Gender", y = "Resting Blood Pressure (mmHg)") +
+  scale_fill_manual(values = c("pink", "lightblue"), labels = c("Female", "Male")) +
+  theme_minimal()
+
+# Arrange two plots side by side
+gridExtra::grid.arrange(p3, p4, ncol = 2)
+
+```
+
+# Descriptive Statistics and Visualisation (Cont)
+
+### Resting Blood Pressure vs Heart Attack Risk
+
+```{r, echo = FALSE, fig.width = 4, fig.height = 2}
+ggplot(heart, aes(x = trestbps, y = target)) +
+  geom_point(color = "maroon", alpha = 0.6, size = 2) + # Blue points with transparency
+  geom_smooth(method = "lm", color = "salmon", se = FALSE) + # Add a red Slinear regression line
+  labs(title = "Resting Blood Pressure vs Heart Attack Risk",
+       x = "Resting Blood Pressure (trtbps)",
+       y = "Heart Attack Risk (target)") + # Custom axis labels and title
+  theme_minimal() + # Use a minimal theme for a clean look
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 10), # Center and bold title
+    axis.title.x = element_text(size = 8), # Increase font size of x-axis label
+    axis.title.y = element_text(size = 8), # Increase font size of y-axis label
+    #axis.text = element_text(size = 10) # Increase font size of axis text
+  )
+
+```
+
+As mentioned in the introduction, heart attack risk appears to be binary with values all either approximately \< 0.40 or \> 0.65.
+
+# Descriptive Statistics Key Points
+
+-   The data is unbalanced, with 312 women and 713 men.
+-   Females appear to be proportionally more at risk from heart attack. With approximately 225 out of 312 females in the high risk category
+-   Cholesterol levels tend to increase with age. Particularly for individuals aged 60-79, where cholesterol levels are noticeably higher compared to younger age groups.
+-   The Age vs Cholesterol scatter plot shows while there is a slight upward trend in cholesterol with age, the correlation appears weak.
+-   Both genders show very similar distributions in resting blood pressure, suggesting gender may not be a significant factor in determining blood pressure.
+
+# Hypothesis Testing
+
+## Does Gender Affect Heart Attack Risk?
+
+Null Hypothesis (H0): There is no significant difference in heart attack risk between men and women. $$H_0:\mu_1 = \mu_2 $$
+
+Alternative Hypothesis (H1): There is a significant difference in heart attack risk between men and women.$$H_A: \mu_1 \ne\mu_2$$
+
+# Assumptions
+
+The Central Limit Theorem states that the sampling distribution of a mean will be approximately normally distributed, regardless of the underlying population distribution when sample size (n) is \> 30. The sample size of our data is 1025, made up of 312 women and 713 men.
+
+## Levene Test
+
+```{r, echo = FALSE}
+options(width = 40, height = 40)
+# Perform Levene's Test
+l_test <- leveneTest(target ~ sex, data = heart)
+
+# Format the p-value to display more decimals
+l_test$`Pr(>F)` <- format.pval(l_test$`Pr(>F)`, digits = 6)
+
+# Use kable to output the test result
+kable(l_test, digits = 6)
+```
+
+-   The p-value in the Levene test is \< 0.05
+-   Therefore the assumption of equal variance is violated.
+
+# Two-Sample T-test
+
+```{r, echo = FALSE}
+# Two-sample t-test for heart attack risk (target) by gender
+# var.equal FALSE due to equal variance being violated in levene test
+t_test_result_risk_gender <- t.test(target ~ sex, data = heart, var.equal = FALSE, alternative = "two.sided")
+print(t_test_result_risk_gender)
+```
+
+# Hypthesis Testing Results Explained
+
+-   Levene's test indicated that the assumption of equal variances was violated (p \< .001), so Welch's t-test was used.
+-   The t-test found a statistically significant difference in heart attack risk between the two genders (t(668.69) = 9.67, p \< .001).
+-   Females had a higher mean heart attack risk (mean = 0.656) compared to males (mean = 0.484).
+-   The 95% confidence interval for the difference in means was [0.137, 0.206].
+-   The results suggest that females have significantly higher heart attack risk than males.
+
+# Categorical Association
+
+## Chi-Square Test of Association - Statistical Hypothesis:
+
+-   Null Hypothesis (H0): There is no association in the population between age-group and heart attack risk (independence)
+
+-   Alternative Hypothesis (HA): There is an association in the population between age-group and heart attack risk (dependence)
+
+# Chi-Square Test
+
+## Contingency Table : Age Group Vs Heart Attack Risk
+
+-   '0' = Low Risk
+-   '1' = High Risk
+
+```{r, echo = FALSE}
+# Create a contingency table of age group and target_binary
+contingency_table_age <- table(heart$age_group, heart$target_binary)
+
+# View the contingency table
+knitr::kable(contingency_table_age)
+
+# Perform the Chi-Square test
+chi_squared_test_age <- chisq.test(contingency_table_age)
+
+# View the results of the Chi-Square test
+chi_squared_test_age
+
+```
+
+# Chi-Sqare Results
+
+-   The p-value was \< 0.05 level of significance, H0 is rejected.
+-   This suggests that heart attack risk is significantly associated with age group, meaning that heart attack risk (low vs. high) varies across different age groups.
+
+# Discussion
+
+-   Women are at higher risk of having a heart attack compared to men. This contradicts current research, as men are known to have higher risk of heart attacks [6].
+-   Cholesterol levels generally increase with age.
+-   Men and women have very similar blood pressure.
+-   Further research needs to be done focusing on the factors affecting women's heart attack risk.
+-   Our data is limited in it's ability to make inference, mainly due to it's demographic homogeneity and age: the data was collated in 1988. Further research on current data with more diversity across population groups is required.
+
+# Final Conclusion
+
+-   People aged 70 and over and women are at increased risk of heart attack.
+-   Early identification of risk factors such as high cholesterol and elevated blood pressure, especially among older adults and women, can potentially lead to reduced risk of heart attack through early intervention. Gender-specific strategies for prevention and early treatment should be prioritised to address the disproportionate risk for women identified in this study.
+
+# References
+
+* [1] https://www.heart.org/en/health-topics/heart-attack/understand-your-risks-to-prevent-a-heart-attack#:~:text=Your%20risk%20factors%2C%20including%20age,supplements%20you've%20been%20taking.
+* [2] https://www.kaggle.com/datasets/juledz/heart-attack-prediction
+* [3] https://www.healthxchange.sg/heart-lungs/heart-attack/how-to-survive-a-heart-attack-when-alone 
+* [4] https://www.shutterstock.com/search/blood-pressure-banner
+* [5] https://sanzubusinesstraining.com/how-to-write-a-problem-statement/
+* [6] https://www.heartfoundation.org.au/your-heart/evidence-and-statistics/key-statistics-heart-attack
